@@ -3,12 +3,15 @@ function randomMs(minMs, maxMs) {
 }
 
 function setupLeaveRejoin(bot, createBot) {
+    // التايمرز الأساسية
     let leaveTimer = null
     let jumpTimer = null
     let jumpOffTimer = null
     let reconnectTimer = null
 
+    // الحالة
     let stopped = false
+    let reconnectAttempts = 0
     let lastLogAt = 0
 
     function logThrottled(msg, minGapMs = 2000) {
@@ -32,20 +35,23 @@ function setupLeaveRejoin(bot, createBot) {
         if (stopped || !bot.entity) return
         bot.setControlState('jump', true)
         jumpOffTimer = setTimeout(() => {
-            bot.setControlState('jump', false)
+            if (!stopped) bot.setControlState('jump', false)
         }, 300)
-        const nextJump = randomMs(20000, 60000)
+        const nextJump = randomMs(20000, 120000)
         jumpTimer = setTimeout(scheduleNextJump, nextJump)
     }
 
-    // هذه هي الدالة الجديدة التي أضفتها لك
+    // الدالة المسؤولة عن فحص اللاعبين (التي طلبتها)
     function checkPlayers() {
-        if (stopped) return
-        if (bot.players && Object.keys(bot.players).length > 1) {
+        if (stopped || !bot.players) return
+        
+        // إذا كان عدد اللاعبين أكثر من 1 (يعني فيه أحد غير البوت)
+        if (Object.keys(bot.players).length > 1) {
             console.log('[AFK] فيه لاعب دخل! البوت بيطلع الحين.')
             cleanup()
             bot.quit()
         } else {
+            // فحص كل 5 ثواني
             setTimeout(checkPlayers, 5000)
         }
     }
@@ -54,11 +60,12 @@ function setupLeaveRejoin(bot, createBot) {
         reconnectAttempts = 0
         cleanup()
         stopped = false
-
+        
         console.log('[AFK] البوت دخل ويراقب المتواجدين...')
         
         scheduleNextJump()
-        checkPlayers() // تفعيل مراقبة اللاعبين هنا
+        // تفعيل ميزة المراقبة
+        setTimeout(checkPlayers, 2000) 
     })
 
     bot.on('end', () => cleanup())
@@ -66,5 +73,4 @@ function setupLeaveRejoin(bot, createBot) {
     bot.on('error', () => cleanup())
 }
 
-module.exports = setupLeaveRejoin
 module.exports = setupLeaveRejoin
