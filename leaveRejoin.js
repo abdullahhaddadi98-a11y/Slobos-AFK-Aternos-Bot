@@ -3,7 +3,6 @@ function randomMs(minMs, maxMs) {
 }
 
 function setupLeaveRejoin(bot, createBot) {
-    // التايمرز الأساسية اللي يحتاجها السكربت عشان ما يضرب
     let leaveTimer = null
     let jumpTimer = null
     let jumpOffTimer = null
@@ -29,46 +28,43 @@ function setupLeaveRejoin(bot, createBot) {
         leaveTimer = jumpTimer = jumpOffTimer = reconnectTimer = null
     }
 
-    // وظيفة مراقبة اللاعبين - إذا دخل أحد يطلع البوت
-    function checkPlayers() {
-        if (stopped || !bot.players) return
+    function scheduleNextJump() {
+        if (stopped || !bot.entity) return
+        bot.setControlState('jump', true)
+        jumpOffTimer = setTimeout(() => {
+            bot.setControlState('jump', false)
+        }, 300)
+        const nextJump = randomMs(20000, 60000)
+        jumpTimer = setTimeout(scheduleNextJump, nextJump)
+    }
 
-        const playerCount = Object.keys(bot.players).length
-        if (playerCount > 1) {
-            logThrottled('[AFK] فيه لاعب دخل! البوت بيطلع الحين عشان تاخذون راحتكم.')
+    // هذه هي الدالة الجديدة التي أضفتها لك
+    function checkPlayers() {
+        if (stopped) return
+        if (bot.players && Object.keys(bot.players).length > 1) {
+            console.log('[AFK] فيه لاعب دخل! البوت بيطلع الحين.')
             cleanup()
             bot.quit()
         } else {
-            // يفحص كل 5 ثواني عشان يكون سريع الاستجابة
             setTimeout(checkPlayers, 5000)
         }
     }
 
     bot.once('spawn', () => {
+        reconnectAttempts = 0
         cleanup()
         stopped = false
-        logThrottled(`[AFK] البوت دخل الخادم ويراقب المتواجدين...`)
 
-        // ابدأ القفز التلقائي (Anti-AFK)
-        const startJumping = () => {
-            if (stopped) return
-            bot.setControlState('jump', true)
-            setTimeout(() => bot.setControlState('jump', false), 300)
-            jumpTimer = setTimeout(startJumping, randomMs(20000, 60000))
-        }
-        startJumping()
-
-        // ابدأ مراقبة اللاعبين
-        checkPlayers()
+        console.log('[AFK] البوت دخل ويراقب المتواجدين...')
+        
+        scheduleNextJump()
+        checkPlayers() // تفعيل مراقبة اللاعبين هنا
     })
 
-    bot.on('end', () => {
-        cleanup()
-        // إعادة الاتصال تتم عن طريق index.js فلا نحتاج لكود إضافي هنا
-    })
-
-    bot.on('error', () => cleanup())
+    bot.on('end', () => cleanup())
     bot.on('kicked', () => cleanup())
+    bot.on('error', () => cleanup())
 }
 
+module.exports = setupLeaveRejoin
 module.exports = setupLeaveRejoin
