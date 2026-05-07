@@ -3,55 +3,60 @@ function randomMs(minMs, maxMs) {
 }
 
 function setupLeaveRejoin(bot, createBot) {
+    // التايمرز الأساسية اللي يحتاجها السكربت عشان ما يضرب
+    let leaveTimer = null
+    let jumpTimer = null
+    let jumpOffTimer = null
+    let reconnectTimer = null
+
     let stopped = false
-    let isReconnecting = false
+    let lastLogAt = 0
 
-    function cleanup() {
-        stopped = true
-        // تنظيف أي مؤقتات أو مستمعين قدامى
-    }
-
-    // دالة فحص وجود لاعبين
-    function checkPlayers() {
-        if (stopped) return
-
-        const playerNames = Object.keys(bot.players)
-        // إذا كان عدد اللاعبين أكبر من 1 (يعني البوت + شخص آخر)
-        if (playerNames.length > 1) {
-            console.log(`[AFK] لاعب دخل الخادم. جاري الخروج...`)
-            cleanup()
-            bot.quit()
-        } else {
-            // استمر في الفحص كل 10 ثواني
-            setTimeout(checkPlayers, 10000)
+    function logThrottled(msg, minGapMs = 2000) {
+        const now = Date.now()
+        if (now - lastLogAt >= minGapMs) {
+            lastLogAt = now
+            console.log(msg)
         }
     }
 
-    // دالة إعادة الاتصال بعد مدة عشوائية (5-15 دقيقة)
-    function scheduleReconnect() {
-        if (isReconnecting) return
-        isReconnecting = true
-        
-        const delay = randomMs(300000, 900000) // من 5 إلى 15 دقيقة
-        console.log(`[AFK] سيتم محاولة الدخول مرة أخرى بعد ${Math.round(delay/60000)} دقيقة`)
+    function cleanup() {
+        stopped = true
+        if (leaveTimer) clearTimeout(leaveTimer)
+        if (jumpTimer) clearTimeout(jumpTimer)
+        if (jumpOffTimer) clearTimeout(jumpOffTimer)
+        if (reconnectTimer) clearTimeout(reconnectTimer)
+        leaveTimer = jumpTimer = jumpOffTimer = reconnectTimer = null
+    }
 
-        setTimeout(() => {
-            isReconnecting = false
-            if (typeof createBot === 'function') createBot()
-        }, delay)
+    // وظيفة مراقبة اللاعبين - إذا دخل أحد يطلع البوت
+    function checkPlayers() {
+        if (stopped || !bot.players) return
+
+        const playerCount = Object.keys(bot.players).length
+        if (playerCount > 1) {
+            logThrottled('[AFK] فيه لاعب دخل! البوت بيطلع الحين عشان تاخذون راحتكم.')
+            cleanup()
+            bot.quit()
+        } else {
+            // يفحص كل 5 ثواني عشان يكون سريع الاستجابة
+            setTimeout(checkPlayers, 5000)
+        }
     }
 
     bot.once('spawn', () => {
+        cleanup()
         stopped = false
-        isReconnecting = false
-        console.log(`[AFK] البوت متصل الآن. يراقب وجود لاعبين...`)
-        
-        // ابدأ القفز العشوائي (Anti-AFK)
-        const jumpInterval = setInterval(() => {
-            if (stopped) return clearInterval(jumpInterval)
+        logThrottled(`[AFK] البوت دخل الخادم ويراقب المتواجدين...`)
+
+        // ابدأ القفز التلقائي (Anti-AFK)
+        const startJumping = () => {
+            if (stopped) return
             bot.setControlState('jump', true)
-            setTimeout(() => bot.setControlState('jump', false), 500)
-        }, randomMs(20000, 60000))
+            setTimeout(() => bot.setControlState('jump', false), 300)
+            jumpTimer = setTimeout(startJumping, randomMs(20000, 60000))
+        }
+        startJumping()
 
         // ابدأ مراقبة اللاعبين
         checkPlayers()
@@ -59,13 +64,11 @@ function setupLeaveRejoin(bot, createBot) {
 
     bot.on('end', () => {
         cleanup()
-        scheduleReconnect()
+        // إعادة الاتصال تتم عن طريق index.js فلا نحتاج لكود إضافي هنا
     })
 
-    bot.on('error', (err) => {
-        cleanup()
-        scheduleReconnect()
-    })
+    bot.on('error', () => cleanup())
+    bot.on('kicked', () => cleanup())
 }
 
 module.exports = setupLeaveRejoin
