@@ -3,115 +3,68 @@ function randomMs(minMs, maxMs) {
 }
 
 function setupLeaveRejoin(bot, createBot) {
-    // Timers
-    let leaveTimer = null
-    let jumpTimer = null
-    let jumpOffTimer = null
-    let reconnectTimer = null
-
-    // State
     let stopped = false
-    let reconnectAttempts = 0
-    let lastLogAt = 0
-
-    function logThrottled(msg, minGapMs = 2000) {
-        const now = Date.now()
-        if (now - lastLogAt >= minGapMs) {
-            lastLogAt = now
-            console.log(msg)
-        }
-    }
+    let isReconnecting = false
 
     function cleanup() {
         stopped = true
-        if (leaveTimer) clearTimeout(leaveTimer)
-        if (jumpTimer) clearTimeout(jumpTimer)
-        if (jumpOffTimer) clearTimeout(jumpOffTimer)
-        if (reconnectTimer) clearTimeout(reconnectTimer)
-        leaveTimer = jumpTimer = jumpOffTimer = reconnectTimer = null
+        // تنظيف أي مؤقتات أو مستمعين قدامى
     }
 
-    function scheduleNextJump() {
-        if (stopped || !bot.entity) return
-
-        bot.setControlState('jump', true)
-        jumpOffTimer = setTimeout(() => {
-            bot.setControlState('jump', false)
-        }, 300)
-
-        // random jump 20s -> 5m
-        const nextJump = randomMs(20000, 5 * 60 * 1000)
-        jumpTimer = setTimeout(scheduleNextJump, nextJump)
-    }
-
-    function scheduleReconnect(reason = 'end') {
+    // دالة فحص وجود لاعبين
+    function checkPlayers() {
         if (stopped) return
 
-        // FAST RECONNECT: 2s -> 10s (User requested faster)
-        let delay = randomMs(2000, 10000)
-
-        // Slight backoff for repeated failures, but keep it snappy
-        reconnectAttempts++
-        if (reconnectAttempts > 3) {
-            delay += 5000 // Add 5s if it's failing a lot
+        const playerNames = Object.keys(bot.players)
+        // إذا كان عدد اللاعبين أكبر من 1 (يعني البوت + شخص آخر)
+        if (playerNames.length > 1) {
+            console.log(`[AFK] لاعب دخل الخادم. جاري الخروج...`)
+            cleanup()
+            bot.quit()
+        } else {
+            // استمر في الفحص كل 10 ثواني
+            setTimeout(checkPlayers, 10000)
         }
+    }
 
-        // Cap at 30s max
-        delay = Math.min(delay, 15000)
+    // دالة إعادة الاتصال بعد مدة عشوائية (5-15 دقيقة)
+    function scheduleReconnect() {
+        if (isReconnecting) return
+        isReconnecting = true
+        
+        const delay = randomMs(300000, 900000) // من 5 إلى 15 دقيقة
+        console.log(`[AFK] سيتم محاولة الدخول مرة أخرى بعد ${Math.round(delay/60000)} دقيقة`)
 
-        logThrottled(`[AFK] Rejoin scheduled in ${Math.round(delay / 1000)}s (reason: ${reason}, attempt: ${reconnectAttempts})`)
-
-        reconnectTimer = setTimeout(() => {
-            if (stopped) return
-            try {
-                if (typeof createBot === 'function') createBot()
-            } catch (e) {
-                console.log('[AFK] createBot error:', e?.message || e)
-                scheduleReconnect('createBot-error')
-            }
+        setTimeout(() => {
+            isReconnecting = false
+            if (typeof createBot === 'function') createBot()
         }, delay)
     }
 
     bot.once('spawn', () => {
-        // reset attempt counter on successful connect
-        reconnectAttempts = 0
-
-        // clear any old timers
-        cleanup()
         stopped = false
+        isReconnecting = false
+        console.log(`[AFK] البوت متصل الآن. يراقب وجود لاعبين...`)
+        
+        // ابدأ القفز العشوائي (Anti-AFK)
+        const jumpInterval = setInterval(() => {
+            if (stopped) return clearInterval(jumpInterval)
+            bot.setControlState('jump', true)
+            setTimeout(() => bot.setControlState('jump', false), 500)
+        }, randomMs(20000, 60000))
 
-        // Stay connected: 2 minutes -> 15 minutes (More realistic AFK behavior)
-        // Stay connected 1-5 minutes before a scheduled leave/rejoin cycle.
-        const stayTime = randomMs(60000, 300000)
-
-        logThrottled(`[AFK] Will leave in ${Math.round(stayTime / 1000)} seconds`)
-
-        scheduleNextJump()
-
-        leaveTimer = setTimeout(() => {
-            if (stopped) return
-            logThrottled('[AFK] Leaving server (timer)')
-            cleanup()
-            try {
-                bot.quit()
-            } catch (e) {
-                // ignore if already closed
-            }
-        }, stayTime)
+        // ابدأ مراقبة اللاعبين
+        checkPlayers()
     })
 
-    // When the connection ends for ANY reason, just clean up our timers.
-    // Reconnection is handled by index.js — no duplicate reconnect here.
     bot.on('end', () => {
         cleanup()
+        scheduleReconnect()
     })
 
-    bot.on('kicked', () => {
+    bot.on('error', (err) => {
         cleanup()
-    })
-
-    bot.on('error', () => {
-        cleanup()
+        scheduleReconnect()
     })
 }
 
